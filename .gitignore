@@ -6,6 +6,9 @@ cal[0-9][0-9][0-9][0-9].txt
 *.bin
 build/
 data/
+# built packages
+dist/
+*.xtapp
 # emulator state and output
 .emu/
 tour/
