@@ -77,6 +77,19 @@ end
 local function text(g, x, y, s, f) g:text(x, y, s, { font = f }) end
 local function ctext(g, cx, y, s, f) text(g, cx - width(f, s) // 2, y, s, f) end
 local function rule(g, x, y, w) g:line(x, y, x + w, y) end
+-- a button outline: rounded where the firmware's round_rect works, else square (firmware
+-- builds differ in how round_rect takes its radius, and some lack it)
+local box_mode = nil
+local function box(g, x, y, w, h)
+  if box_mode == nil or box_mode == 1 then
+    if pcall(function() g:round_rect(x, y, w, h, { radius = 8 }) end) then box_mode = 1; return end
+  end
+  if box_mode == nil or box_mode == 2 then
+    if pcall(function() g:round_rect(x, y, w, h, 8) end) then box_mode = 2; return end
+  end
+  box_mode = 3
+  g:rect(x, y, w, h)
+end
 local function frame(g, x, y, w, h, thick)
   g:rect(x, y, w, h)
   if thick then g:rect(x + 1, y + 1, w - 2, h - 2); g:rect(x + 2, y + 2, w - 4, h - 4) end
@@ -658,7 +671,7 @@ local function draw_home(g)
   rule(g, M, ROW_TOP + #HOURS * ROW_H, W - 2 * M)
   -- Mass and more
   for k, b in ipairs(strip_buttons()) do
-    g:round_rect(b.x, STRIP_Y, b.w, STRIP_H, 8)
+    box(g, b.x, STRIP_Y, b.w, STRIP_H)
     ctext(g, b.x + b.w // 2, STRIP_Y + 13, b.e.btn, fs)
     if S.sel == #HOURS + k then frame(g, b.x - 3, STRIP_Y - 3, b.w + 6, STRIP_H + 6) end
   end
@@ -670,7 +683,7 @@ local function draw_home(g)
   end
   -- day buttons
   for _, b in ipairs(bottom_buttons()) do
-    g:round_rect(b.x, BTN_Y, b.w, BTN_H, 8)
+    box(g, b.x, BTN_Y, b.w, BTN_H)
     ctext(g, b.x + b.w // 2, BTN_Y + 12, b.label, fm)
   end
 end
@@ -733,7 +746,7 @@ local function draw_toc(g)
   for k = 1, 3 do
     local bx = M + (k - 1) * (bw + 10)
     if k == 2 or #S.toc > TOC_N then
-      g:round_rect(bx, BTN_Y, bw, BTN_H, 8)
+      box(g, bx, BTN_Y, bw, BTN_H)
       ctext(g, bx + bw // 2, BTN_Y + 12, labels[k], fm)
     end
   end
@@ -753,13 +766,13 @@ local function draw_choose(g)
   text(g, M, 96, 'This day has more than one choice:', fs)
   for k, v in ipairs(S.choose.list) do
     local ry = CH_TOP + (k - 1) * (CH_H + 12)
-    g:round_rect(M, ry, W - 2 * M, CH_H, 8)
+    box(g, M, ry, W - 2 * M, CH_H)
     local ls = wrap(variant_label(info, S.choose.c, v), fm, W - 2 * M - 32)
     for j = 1, math.min(2, #ls) do text(g, M + 16, ry + (#ls == 1 and 20 or 8) + (j - 1) * 24, ls[j], fm) end
     if k == S.choose.sel then frame(g, M - 3, ry - 3, W - 2 * M + 6, CH_H + 6) end
   end
   local bw = (W - 2 * M - 20) // 3
-  g:round_rect(M + bw + 10, BTN_Y, bw, BTN_H, 8)
+  box(g, M + bw + 10, BTN_Y, bw, BTN_H)
   ctext(g, M + bw + 10 + bw // 2, BTN_Y + 12, 'Back', fm)
 end
 
@@ -777,8 +790,8 @@ local function draw_month(g)
   local fl, fm, fs = font(28), font(24), font(20)
   local lday = liturgical_now()
   local title = MONTHS[S.mon_m] .. ' ' .. S.mon_y
-  g:round_rect(M, 14, 56, 48, 8); ctext(g, M + 28, 26, '<', fm)
-  g:round_rect(W - M - 56, 14, 56, 48, 8); ctext(g, W - M - 28, 26, '>', fm)
+  box(g, M, 14, 56, 48); ctext(g, M + 28, 26, '<', fm)
+  box(g, W - M - 56, 14, 56, 48); ctext(g, W - M - 28, 26, '>', fm)
   ctext(g, W // 2, 22, title, fl)
   g:rect(M, 72, W - 2 * M, 2, { fill = true })
   for k, d in ipairs({ 'S', 'M', 'T', 'W', 'T', 'F', 'S' }) do
@@ -820,7 +833,7 @@ local function draw_month(g)
   local labels = { 'Back', 'Today', 'Open' }
   for k = 1, 3 do
     local bx = M + (k - 1) * (bw + 10)
-    g:round_rect(bx, BTN_Y, bw, BTN_H, 8)
+    box(g, bx, BTN_Y, bw, BTN_H)
     ctext(g, bx + bw // 2, BTN_Y + 12, labels[k], fm)
   end
 end
@@ -861,7 +874,7 @@ local function draw_settings(g)
         frame(g, bx, by, bw, 48, true)
         g:rect(bx + 10, by + 40, bw - 20, 3, { fill = true })
       else
-        g:round_rect(bx, by, bw, 48, 8)
+        box(g, bx, by, bw, 48)
       end
       ctext(g, bx + bw // 2, by + 12, o, fm)
     end
@@ -882,7 +895,7 @@ local function draw_settings(g)
     end
   end
   local bw = (W - 2 * M - 20) // 3
-  g:round_rect(M + bw + 10, BTN_Y, bw, BTN_H, 8)
+  box(g, M + bw + 10, BTN_Y, bw, BTN_H)
   ctext(g, M + bw + 10 + bw // 2, BTN_Y + 12, 'Done', fm)
 end
 
@@ -897,7 +910,18 @@ function on_draw(c, g)
     elseif sc == 'settings' then draw_settings(g)
     else draw_home(g) end
   end)
-  if not ok then log(err); pcall(function() g:text(20, 400, 'Error: ' .. tostring(err):sub(1, 60)) end) end
+  if not ok then
+    log(err)
+    pcall(function()
+      g:clear(0)
+      local msg = 'Error: ' .. tostring(err)
+      for k = 0, 5 do
+        local part = msg:sub(k * 38 + 1, (k + 1) * 38)
+        if part == '' then break end
+        g:text(20, 360 + k * 26, part)
+      end
+    end)
+  end
 end
 
 ------------------------------------------------------------------ input
