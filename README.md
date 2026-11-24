@@ -15,8 +15,9 @@ never submit the app to the InkApp store.
 
 | path | what it is |
 |---|---|
-| `app/office/` | the InkApp: `manifest.json`, `index.lua` (the app), `lockscreen.lua` (lock screen) |
+| `app/office/` | the InkApp: `manifest.json`, `index.lua` (the app), `lockscreen.lua` (lock screen), `icon.png` |
 | `tools/convert.py` | turns Universalis year EPUBs into the app's data files |
+| `tools/xtpack.py` | packs and encrypts the app into an installable `.xtapp` package |
 | `tools/emulator/` | scripted runs in the [inkemu](https://pypi.org/project/inkemu/) emulator |
 | `docs/` | screenshots |
 
@@ -53,8 +54,52 @@ Uninstalling the app deletes `XTApps/office/files/`; installing over it keeps th
 
 ## Installing the app
 
-Through Xteink's InkApp AI Studio (https://xtapp-ai.xteink.cc/developer): apply for developer
-access with your XTEINK account, put the three files from `app/office/` in a project, and use
+### Option 1: Build and install a local `.xtapp` package
+
+Requires Python 3.10+ and the `cryptography` (and `pillow`, for `icon.png`) packages:
+
+```bash
+pip install cryptography pillow
+python3 tools/xtpack.py
+```
+
+Or with [`uv`](https://docs.astral.sh/uv/) (installs dependencies automatically):
+
+```bash
+uv run tools/xtpack.py
+```
+
+This packs `app/office/` into `dist/office.xtapp` using the XTOS Licorice container format
+(`P256-ECDH-HKDF-SHA256-AESKW` wrapped DEK, AES-128-CTR encrypted `XTCO` code section with
+HMAC-SHA256, and 1-bpp `XTAB` grid icon). You can also pack another folder or choose an output
+path: `python3 tools/xtpack.py path/to/app -o out.xtapp`.
+
+To install on the X4 Pro:
+
+1. Put the reader in USB mode, copy `dist/office.xtapp` to the **root of the SD card**, and eject.
+2. On the reader, open **All Files**, tap `office.xtapp`, and confirm **Install**.
+3. Open **Divine Office** from the drawer's **Ink App** list. (If the **Ink App** entry is hidden,
+   unlock it under **Settings → About** by tapping **Model** 10 times quickly.)
+
+#### If a future firmware update rotates the device key
+
+If installing gives **Install failed** after a Licorice firmware update, dump your device's flash
+with `esptool` (read-only; keep the dump private because it contains your Wi-Fi credentials) and
+pass it via `--image`:
+
+```bash
+python3 -m esptool --chip esp32s3 read-flash 0 0x1000000 x4pro-flash.bin
+python3 tools/xtpack.py --image x4pro-flash.bin
+```
+
+`tools/xtpack.py` accepts either a Licorice app partition binary or a raw 16 MB flash dump, locates
+the new ECDH scalar in DROM automatically, and packs with the derived public key. You can also
+inspect a key or verify a built package with `--derive-key FIRMWARE` or `--info dist/office.xtapp --image FIRMWARE`.
+
+### Option 2: InkApp AI Studio
+
+Alternatively, through Xteink's InkApp AI Studio (https://xtapp-ai.xteink.cc/developer): apply for
+developer access with your XTEINK account, put the files from `app/office/` in a project, and use
 **Install on device**. Do not submit it to the store. The app code holds no Universalis text.
 
 ## Testing in the emulator
