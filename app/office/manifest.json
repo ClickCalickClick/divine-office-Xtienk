@@ -1,0 +1,15 @@
+{
+  "app_id": "office",
+  "display_name": "Divine Office",
+  "version": "0.2.0",
+  "author": "Jared",
+  "description": "Liturgy of the Hours and the day's Mass. Opens today's Hour; data comes from your own Universalis export.",
+  "entry": "index.lua",
+  "api": "2.9",
+  "permissions": [],
+  "lockscreen": {
+    "enabled": true,
+    "entry": "lockscreen.lua",
+    "interval_sec": 3600
+  }
+}
