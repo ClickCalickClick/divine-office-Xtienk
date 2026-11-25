@@ -49,7 +49,7 @@ local S = {
   sel = 3,              -- highlighted entry on home (keys), 1-12
   variant = 0,          -- 1 when the day's optional memorial is chosen
   item = nil, open_v = 0, page = 1, pages = nil, toc = nil, lday = nil,
-  size = 2, vr = true, spacing = 2, margin = 2, lock = false,
+  size = 2, vr = false, spacing = 2, margin = 2, lock = false,
   err = nil,
   turns = 0,
 }
@@ -405,7 +405,7 @@ end
 ------------------------------------------------------------------ saving
 
 local function save_prefs()
-  swrite('prefs.txt', string.format('size=%d\nvr=%s\nspacing=%d\nmargin=%d\nlock=%s\n',
+  swrite('prefs.txt', string.format('size=%d\nvrv2=%s\nspacing=%d\nmargin=%d\nlock=%s\n',
     S.size, S.vr and '1' or '0', S.spacing, S.margin, S.lock and '1' or '0'))
 end
 
@@ -1176,7 +1176,9 @@ local function load_prefs()
   S.size = num('size', #SIZES, S.size)
   S.spacing = num('spacing', #SPACING, S.spacing)
   S.margin = num('margin', #MARGINS, S.margin)
-  S.vr = not p:match('vr=0')
+  -- 'vrv2': the reader's font has no ℣ ℟, so V. R. is the default; the old 'vr' key held the
+  -- earlier default and is ignored
+  S.vr = p:match('vrv2=1') ~= nil
   S.lock = p:match('lock=1') ~= nil
 end
 

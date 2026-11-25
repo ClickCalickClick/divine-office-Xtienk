@@ -103,7 +103,14 @@ function on_draw(c, g)
     local fl, fm, fs = f('large'), f('medium'), f('small')
     g:text(M, 60, wd, { font = fl })
     g:text(M, 60 + lh(fl) + 4, ld .. ' ' .. MONTHS[lm] .. ' ' .. ly, { font = fm })
-    local yy = 60 + lh(fl) + lh(fm) + 22
+    -- the hour, and the Hour it falls in (redrawn every hour, so no minutes)
+    local cur = 1
+    for i, h in ipairs(HOURS) do
+      if lh24 >= h.from and lh24 < h.to then cur = i end
+    end
+    local ty = 60 + lh(fl) + 4 + lh(fm) + 4
+    g:text(M, ty, clock12(hour) .. ', ' .. HOURS[cur].name, { font = fm })
+    local yy = ty + lh(fm) + 22
     g:rect(M, yy, W - 2 * M, 2, { fill = true })
     yy = yy + 18
 
@@ -118,14 +125,15 @@ function on_draw(c, g)
     end
 
     -- now and next
-    local cur, nxt = nil, nil
-    for i, h in ipairs(HOURS) do
-      if lh24 >= h.from and lh24 < h.to then cur = i end
-    end
-    if not cur then cur = 1 end
-    nxt = cur % #HOURS + 1
+    local nxt = cur % #HOURS + 1
     local by = math.max(yy + 40, 380)
-    g:round_rect(M, by, W - 2 * M, 130, 12)
+    -- rounded corners where the firmware takes them, else a plain box (round_rect with a bare
+    -- radius number fails on some firmware, as it did in the app)
+    if not pcall(function() g:round_rect(M, by, W - 2 * M, 130, { radius = 12 }) end) then
+      if not pcall(function() g:round_rect(M, by, W - 2 * M, 130, 12) end) then
+        g:rect(M, by, W - 2 * M, 130)
+      end
+    end
     g:text(M + 20, by + 16, 'Now', { font = fs })
     g:text(M + 20, by + 44, HOURS[cur].name, { font = fl })
     g:text(M + 20, by + 44 + lh(fl) + 6,
@@ -146,6 +154,11 @@ function on_draw(c, g)
     if secs < 60 then secs = 60 end
     pcall(function() ctx.lock:set_interval(secs) end)
   end)
-  if not ok then pcall(function() g:text(10, 10, 'lock error: ' .. tostring(err):sub(1, 40)) end) end
+  if not ok then
+    pcall(function()
+      local msg, y = 'lock error: ' .. tostring(err), 10
+      while #msg > 0 and y < 200 do g:text(10, y, msg:sub(1, 38)); msg = msg:sub(39); y = y + 24 end
+    end)
+  end
   pcall(function() ctx.lock:done() end)
 end
