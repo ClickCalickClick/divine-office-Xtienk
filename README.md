@@ -18,6 +18,7 @@ never submit the app to the InkApp store.
 | `app/office/` | the InkApp: `manifest.json`, `index.lua` (the app), `lockscreen.lua` (lock screen), `icon.png` |
 | `tools/convert.py` | turns Universalis year EPUBs into the app's data files |
 | `tools/xtpack.py` | packs and encrypts the app into an installable `.xtapp` package |
+| `tools/studio_backup.py` | packs the app as an InkApp AI Studio project backup (zip) |
 | `tools/emulator/` | scripted runs in the [inkemu](https://pypi.org/project/inkemu/) emulator |
 | `docs/` | screenshots |
 
@@ -98,9 +99,24 @@ inspect a key or verify a built package with `--derive-key FIRMWARE` or `--info 
 
 ### Option 2: InkApp AI Studio
 
-Alternatively, through Xteink's InkApp AI Studio (https://xtapp-ai.xteink.cc/developer): apply for
-developer access with your XTEINK account, put the files from `app/office/` in a project, and use
-**Install on device**. Do not submit it to the store. The app code holds no Universalis text.
+Alternatively, let Xteink's InkApp AI Studio build and install the package:
+
+1. Apply for developer access at https://xtapp-ai.xteink.cc/developer/apply with your XTEINK
+   account (the one in the XTEINK phone app).
+2. Make the Studio project backup:
+
+   ```
+   python3 tools/studio_backup.py        # -> dist/office-studio-backup.zip
+   ```
+
+3. In Studio: **More (...) → Import backup**, pick the zip. It opens as a new project.
+4. Press **Install on device**. Do not submit it to the store. The zip holds only the app's code
+   and icon, no Universalis text.
+5. Copy the data files to `XTApps/office/files/` (see above) and open **≡ → Ink App → Divine
+   Office**. If there is no Ink App row, tap "Model" ten times in Settings → About.
+
+If Studio offers the package as a download instead, copy the `.xtapp` to the root of the SD
+card, open **All Files**, tap it and confirm **Install**.
 
 ## Testing in the emulator
 
