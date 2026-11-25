@@ -39,7 +39,9 @@ local MONTHS = { 'January', 'February', 'March', 'April', 'May', 'June', 'July',
 local SIZES = { 20, 24, 28 }               -- text size (px); the host snaps them to its fonts
 local SPACING = { 0, 3, 7 }                -- extra px between lines
 local MARGINS = { 16, 24, 40 }             -- reader side margin
-local SAMPLE = '℣℟–—‘’“”…æœÆŒéèêàâç'
+-- glyphs a font is asked to cover beyond ASCII (not ℣ ℟: the reader's font has none, and asking
+-- for missing glyphs can be slow)
+local SAMPLE = '–—‘’“”…æœÆŒéèêàâç'
 
 ------------------------------------------------------------------ state
 
@@ -60,6 +62,21 @@ local function log(s) pcall(function() ctx:log(tostring(s)) end) end
 local function redraw() pcall(function() ctx:invalidate() end) end
 local function collect() pcall(function() ctx.gc:collect() end) end
 
+-- Opening a long text (a Mass is up to ~60 KB) takes longer than the host allows one callback,
+-- so the work runs in a coroutine, resumed from short timer callbacks; pause() hands control
+-- back once a slice has run for SLICE_MS.
+local SLICE_MS = 120
+local slice_t0 = 0
+local function millis()
+  local ok, ms = pcall(function() return ctx.clock:millis() end)
+  return (ok and tonumber(ms)) or nil
+end
+local function pause(force)
+  if not (coroutine.isyieldable and coroutine.isyieldable()) then return end
+  local now = millis()
+  if force or not now or now - slice_t0 >= SLICE_MS then coroutine.yield() end
+end
+
 local font_cache = {}
 local function font(px)
   if font_cache[px] then return font_cache[px] end
@@ -67,6 +84,7 @@ local function font(px)
   if not ok or not f then ok, f = pcall(function() return ctx.fonts:size(px) end) end
   if not ok or not f then f = ctx.fonts.medium end
   font_cache[px] = f
+  pause()          -- making a font can be slow on the device
   return f
 end
 local function lh(f) local ok, h = pcall(function() return f.line_height end); return (ok and tonumber(h)) or 24 end
@@ -272,6 +290,7 @@ end
 local function read_segment(file, ymd, key)
   local blob = sread(file)
   if not blob then return nil, 'Missing file ' .. file end
+  pause()
   local nl = blob:find('\n', 1, true)
   local hlen, z = blob:sub(1, nl - 1):match('^XO1 (%d+) (%d)')
   if not hlen then return nil, 'Unreadable file ' .. file end
@@ -283,11 +302,13 @@ local function read_segment(file, ymd, key)
   local seg = blob:sub(base + tonumber(off) + 1, base + tonumber(off) + tonumber(len))
   blob, header = nil, nil
   if z == '1' then
+    pause()
     local ok, out = pcall(function() return ctx.zlib:decompress(seg) end)
     if not ok or type(out) ~= 'string' then return nil, 'Could not unpack the text' end
     seg = out
   end
   collect()
+  pause()
   return seg
 end
 
@@ -325,10 +346,14 @@ local function paginate(src)
   -- a page is kept as one string, a line per item ("x y font text", or "- y" for a rule),
   -- as tables per item would not fit the heap for the longest Masses
   local fonts, fidx = {}, {}
+  local vr_mark = false
   local function add(x, yy, str, f)
     local k = fidx[f]
     if not k then fonts[#fonts + 1] = f; k = #fonts; fidx[f] = k end
-    cur[#cur + 1] = x .. ' ' .. yy .. ' ' .. k .. ' ' .. str
+    -- '*' after the font marks a line that starts with a versicle or response letter that
+    -- draw_read crosses with a slash, as ℣ ℟ (the reader's font has neither)
+    cur[#cur + 1] = x .. ' ' .. yy .. ' ' .. k .. (vr_mark and '*' or '') .. ' ' .. str
+    vr_mark = false
   end
   local function new_page() pages[#pages + 1] = table.concat(cur, '\n'); cur = {}; y = top end
   local function mark(label) toc[#toc + 1] = { label = label, page = #pages + 1 } end
@@ -347,6 +372,7 @@ local function paginate(src)
     end
   end
   for raw in (src .. '\n'):gmatch('([^\n]*)\n') do
+    pause()
     local tag, rest = raw:match('^(#?%a)%s?(.*)$')
     if raw == '-' then
       if y ~= top and y + 30 < bottom then
@@ -355,7 +381,12 @@ local function paginate(src)
         y = y + 4
       end
     elseif tag then
-      if not S.vr then rest = rest:gsub('\u{2123}%.?', 'V.'):gsub('\u{211F}%.?', 'R.') end
+      if not S.vr then
+        local lead = rest:match('^[\u{2123}\u{211F}]')
+        if lead then rest = rest:gsub('^\u{2123}', 'V'):gsub('^\u{211F}', 'R') end
+        rest = rest:gsub('\u{2123}%.?', 'V/'):gsub('\u{211F}%.?', 'R/')
+        vr_mark = lead ~= nil
+      end
       if tag == '#H' then
         local a, b = rest:match('^([^|]*)|?(.*)$')
         local f = font(st.H.px)
@@ -444,19 +475,23 @@ local function variant_label(info, c, v)
   return info.alts[v] or ('Option ' .. (v + 1))
 end
 
-local function open_variant(c, v, page)
+-- the open in progress: { co = coroutine, label = text shown meanwhile }
+local job = nil
+
+local function open_now(c, v, page)
   local info = day_info(S.ymd)
-  if not info then S.err = 'No data for ' .. day_label(S.ymd, true); redraw(); return end
+  if not info then S.err = 'No data for ' .. day_label(S.ymd, true); return false end
   local file = file_for(info, c)
-  if not file then S.err = 'Not in your export'; redraw(); return end
+  if not file then S.err = 'Not in your export'; return false end
   S.pages, S.toc = nil, nil
   collect()
   local src, err = read_segment(file, S.ymd, c .. v)
-  if not src then S.err = err; redraw(); return end
-  S.item, S.open_v = c, v
+  if not src then S.err = err; return false end
   local srclen = #src
-  S.pages, S.toc = paginate(src)
+  local pages, toc = paginate(src)
   src = nil
+  S.item, S.open_v = c, v
+  S.pages, S.toc = pages, toc
   local bytes = 0
   for _, pg in ipairs(S.pages) do bytes = bytes + #pg end
   log(string.format('open %s%d %s: %d bytes text, %d pages, %d bytes laid out', c, v, S.ymd, srclen, #S.pages, bytes))
@@ -467,7 +502,42 @@ local function open_variant(c, v, page)
   S.lday = liturgical_now() or S.ymd
   S.sel = ITEM[c].i
   note_place(true)
+  return true
+end
+
+local function step_job()
+  local j = job
+  if not j then return end
+  slice_t0 = millis() or 0
+  local ok, res = coroutine.resume(j.co)
+  if job ~= j then return end
+  if not ok then
+    job = nil
+    log(res)
+    S.err = 'Could not open: ' .. tostring(res):sub(1, 80)
+    redraw()
+  elseif coroutine.status(j.co) == 'dead' then
+    job = nil
+    if res and j.done then pcall(j.done) end
+    redraw()
+  else
+    if not pcall(function() ctx:after(1, step_job) end) then step_job() end
+  end
+end
+
+-- open variant v of item c at a page; done() runs once it is open
+local function open_variant(c, v, page, done)
+  if not (coroutine and coroutine.create) then
+    if open_now(c, v, page) and done then done() end
+    redraw()
+    return
+  end
+  local e = ITEM[c]
+  job = { co = coroutine.create(function() return open_now(c, v, page) end),
+          label = 'Opening ' .. ((e and e.name) or '') .. '\u{2026}', done = done }
+  S.err = nil
   redraw()
+  if not pcall(function() ctx:after(1, step_job) end) then step_job() end
 end
 
 -- open an item, choosing the variant: the chosen memorial if it has one, else ask when the
@@ -535,9 +605,10 @@ local function relayout()
   if not S.item then return end
   local keep = S.page / math.max(1, #S.pages)
   local back = S.screen
-  open_variant(S.item, S.open_v, 1)
-  if S.pages then S.page = math.max(1, math.min(#S.pages, math.floor(keep * #S.pages + 0.5))) end
-  if back ~= 'read' and S.pages then S.screen = back end
+  open_variant(S.item, S.open_v, 1, function()
+    if S.pages then S.page = math.max(1, math.min(#S.pages, math.floor(keep * #S.pages + 0.5))) end
+    if back ~= 'read' and S.pages then S.screen = back end
+  end)
   redraw()
 end
 
@@ -690,6 +761,18 @@ end
 
 ------------------------------------------------------------------ drawing: reader
 
+-- the slash across V or R that makes ℣ or ℟, drawn 2 px wide
+local function vr_slash(g, x, y, letter, f)
+  local w, h = width(f, letter), lh(f)
+  local top, base = y + h * 0.22, y + h * 0.78
+  local x1, y1 = x + w * 0.30, base + h * 0.06
+  local x2, y2 = x + w * 1.08, top + (base - top) * 0.15
+  if letter == 'R' then x1, y1, x2, y2 = x + w * 0.38, base + h * 0.06, x + w * 1.12, top + (base - top) * 0.35 end
+  x1, y1, x2, y2 = math.floor(x1), math.floor(y1), math.floor(x2), math.floor(y2)
+  g:line(x1, y1, x2, y2)
+  g:line(x1 + 1, y1, x2 + 1, y2)
+end
+
 local function draw_read(g)
   local e = ITEM[S.item]
   local fl, fs = font(28), font(20)
@@ -707,8 +790,13 @@ local function draw_read(g)
     if ry then
       g:line(W // 2 - 40, tonumber(ry), W // 2 + 40, tonumber(ry))
     else
-      local x, y, k, str = line:match('^(-?%d+) (%d+) (%d+) (.*)$')
-      if x then text(g, tonumber(x), tonumber(y), str, S.page_fonts[tonumber(k)]) end
+      local x, y, k, star, str = line:match('^(-?%d+) (%d+) (%d+)(%*?) (.*)$')
+      if x then
+        local f = S.page_fonts[tonumber(k)]
+        x, y = tonumber(x), tonumber(y)
+        text(g, x, y, str, f)
+        if star == '*' then vr_slash(g, x, y, str:sub(1, 1), f) end
+      end
     end
   end
   local fy = H - FOOT_H
@@ -843,7 +931,7 @@ end
 local SET_TOP, SET_H = 84, 92
 local SETTINGS = {
   { label = 'Text size',    opts = { 'Small', 'Medium', 'Large' },   key = 'size' },
-  { label = 'Versicles',    opts = { '℣ ℟', 'V. R.' },               key = 'vr' },
+  { label = 'Versicles',    opts = { 'Font', 'Drawn' },               key = 'vr' },
   { label = 'Line spacing', opts = { 'Compact', 'Normal', 'Relaxed' }, key = 'spacing' },
   { label = 'Margins',      opts = { 'Narrow', 'Normal', 'Wide' },   key = 'margin' },
   { label = 'Lock screen',  opts = { 'Off', "Today's Hours" },        key = 'lock' },
@@ -890,7 +978,10 @@ local function draw_settings(g)
     or { 'V. O God, come to my aid.', 'R. O Lord, make haste to help me.' }
   for _, s in ipairs(sample) do
     for k, l in ipairs(wrap(s, f, W - 2 * RM, W - 2 * RM - 28)) do
-      if yy + lh(f) < BTN_Y - 6 then text(g, RM + (k > 1 and 28 or 0), yy, l, f) end
+      if yy + lh(f) < BTN_Y - 6 then
+        text(g, RM + (k > 1 and 28 or 0), yy, l, f)
+        if k == 1 and not S.vr then vr_slash(g, RM, yy, l:sub(1, 1), f) end
+      end
       yy = yy + lh(f) + SPACING[S.spacing]
     end
   end
@@ -903,6 +994,11 @@ function on_draw(c, g)
   local ok, err = pcall(function()
     g:clear(0)
     local sc = S.screen
+    if job then
+      local f = font(SIZES[2])
+      ctext(g, W // 2, H // 2 - 20, job.label, f)
+      return
+    end
     if sc == 'read' and S.pages then draw_read(g)
     elseif sc == 'toc' and S.toc then draw_toc(g)
     elseif sc == 'choose' and S.choose then draw_choose(g)
@@ -1143,6 +1239,7 @@ function on_input(c, ev)
     end
   end
   local ok, err = pcall(function()
+    if job then return end           -- still opening: ignore taps and keys until it is done
     if ev.type == 'key' then
       if key_ok(ev) then on_key(ev.key) end
       return
@@ -1198,11 +1295,11 @@ local function start()
   local lday = liturgical_now()
   local st = type(ctx.state) == 'table' and ctx.state or {}
   if st.screen == 'read' and st.lday and st.lday ~= '' and st.lday == lday and st.ymd and st.item and ITEM[st.item] then
+    show_today()                     -- underneath, in case the reopen fails
     S.ymd = st.ymd
     S.variant = tonumber(st.memorial) or 0
-    local page = tonumber(st.page) or 1
-    open_variant(st.item, tonumber(st.v) or 0, page)
-    if S.screen == 'read' then return end
+    open_variant(st.item, tonumber(st.v) or 0, tonumber(st.page) or 1)
+    return
   end
   show_today()
   redraw()
