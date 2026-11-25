@@ -103,7 +103,14 @@ function on_draw(c, g)
     local fl, fm, fs = f('large'), f('medium'), f('small')
     g:text(M, 60, wd, { font = fl })
     g:text(M, 60 + lh(fl) + 4, ld .. ' ' .. MONTHS[lm] .. ' ' .. ly, { font = fm })
-    local yy = 60 + lh(fl) + lh(fm) + 22
+    -- the hour, and the Hour it falls in (redrawn every hour, so no minutes)
+    local cur = 1
+    for i, h in ipairs(HOURS) do
+      if lh24 >= h.from and lh24 < h.to then cur = i end
+    end
+    local ty = 60 + lh(fl) + 4 + lh(fm) + 4
+    g:text(M, ty, clock12(hour) .. ', ' .. HOURS[cur].name, { font = fm })
+    local yy = ty + lh(fm) + 22
     g:rect(M, yy, W - 2 * M, 2, { fill = true })
     yy = yy + 18
 
@@ -118,12 +125,7 @@ function on_draw(c, g)
     end
 
     -- now and next
-    local cur, nxt = nil, nil
-    for i, h in ipairs(HOURS) do
-      if lh24 >= h.from and lh24 < h.to then cur = i end
-    end
-    if not cur then cur = 1 end
-    nxt = cur % #HOURS + 1
+    local nxt = cur % #HOURS + 1
     local by = math.max(yy + 40, 380)
     -- rounded corners where the firmware takes them, else a plain box (round_rect with a bare
     -- radius number fails on some firmware, as it did in the app)
